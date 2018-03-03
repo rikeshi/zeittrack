@@ -1,0 +1,297 @@
+#!/usr/bin/env lua
+
+-- check the arguments
+if #arg < 1 or #arg > 2 then
+    print(string.format([[
+
+    ./%s <flag> [value]
+    simple zeiterfassungsmanager
+
+    .zeitdb     : database with active entries
+    .zeitlog    : log with complete history
+
+    -a <entry>  : add entry ('YYYY-MM-DD, hh:mm - hh:mm')
+    -f <file>   : add entries from file
+    -l          : print database
+    -h          : print history
+    ]], arg[0]))
+    os.exit(1)
+end
+
+-- return string representation of bits in argument n
+local function bit_str(n)
+    local bits = {}
+    while n ~= 0 do
+        bits[#bits+1] = (n & 1 == 1) and '1' or '0'
+        n = n >> 1
+    end
+    for i = 1, #bits >> 1 do
+        local j = #bits - i + 1
+        bits[i], bits[j] = bits[j], bits[i]
+    end
+    return table.concat(bits)
+end
+
+-- add time y to time x
+local function add(x, y)
+    local m = (x & 0x3f) + (y & 0x3f)
+    local b = ~(m - 60) >> 63 & 1
+    local h = (x >> 6) + (y >> 6) + b
+    return h << 6 | m - 60 * b
+end
+
+-- subtract time y from time x
+local function sub(x, y)
+    local m = (x & 0x3f) - (y & 0x3f)
+    local b = m >> 63 & 1
+    local h = (x >> 6) - (y >> 6) - b
+    local c = h >> 63 & 1
+    return 24 * c + h << 6 | 60 * b + m
+end
+
+-- calculate duration of an entry
+local function duration(n)
+    return sub(n & 0x7ff, n >> 11 & 0x7ff)
+end
+
+-- sum all entries in the database
+local function sum(db)
+    local total = 0
+    for i = 1, #db do
+        total = add(total, duration(db[i]))
+    end
+    return total
+end
+
+-- encode an entry string as a collection of bits
+local function encode(s)
+    local Y, M, D, h1, m1, h2, m2 = s:match(
+            '^(.-)%-(.-)%-(.-),(.-):(.-)%-(.-):(.-)$')
+    return tonumber(Y)  << 31 | tonumber(M)  << 27 | tonumber(D) << 22
+         | tonumber(h1) << 17 | tonumber(m1) << 11
+         | tonumber(h2) << 6  | tonumber(m2)
+end
+
+-- decode bit representation of specific time
+local function decode_time(n)
+    return string.format('%2d:%02d', n >> 6, n & 0x3f)
+end
+
+-- decode bit representation of specific date
+local function decode_date(n)
+    return string.format('%4d-%02d-%02d',
+            n >> 9, n >> 5 & 0xf, n & 0x1f)
+end
+
+-- decode bit representation of entry into a string
+local function decode(n)
+    local dur = duration(n)
+    return {
+        decode_date(n >> 22),
+        decode_time(n >> 11 & 0x7ff),
+        decode_time(n & 0x7ff),
+        decode_time(dur)
+    }
+end
+
+-- convert number to byte string
+local function bytes8(n)
+    return string.char(
+        n >> 56 & 0xff,
+        n >> 48 & 0xff,
+        n >> 40 & 0xff,
+        n >> 32 & 0xff,
+        n >> 24 & 0xff,
+        n >> 16 & 0xff,
+        n >>  8 & 0xff,
+        n & 0xff)
+end
+
+-- convert byte string to number
+local function bits64(s)
+    return s:byte(1) << 56
+         | s:byte(2) << 48
+         | s:byte(3) << 40
+         | s:byte(4) << 32
+         | s:byte(5) << 24
+         | s:byte(6) << 16
+         | s:byte(7) <<  8
+         | s:byte(8)
+end
+
+-- load the database
+local function load_db(fn)
+    local db = {}
+    local f = io.open(fn, 'rb')
+    while f do
+        local s = f:read(8)
+        if not s then break end
+        db[#db+1] = bits64(s)
+    end
+    if f then f:close() end
+    return db
+end
+
+-- save database to file
+local function save_db(db, fn, mode)
+    local f = io.open(fn, mode or 'wb')
+    for _, entry in pairs(db) do
+        f:write(bytes8(entry))
+    end
+    f:close()
+end
+
+-- read a file and add its entries to the database
+local function read_entries(db, fn)
+    for line in io.lines(fn) do
+        db[#db+1] = encode(line)
+    end
+    return db
+end
+
+-- combine entries into a month and write them to file and log
+local function write_month(db, fnout, fnlog, hours, fmt)
+    local fout, flog = io.open(fnout, 'w'), io.open(fnlog, 'ab')
+    if fmt then fout:write(fmt.header) end
+    local i, done = next(db), false
+    local total, mid = 0, 0
+    while not done do
+        local entry = db[i]
+        total = add(total, duration(entry))
+        done = total >> 6 >= hours
+        if done then
+            mid = sub(entry & 0x7ff, sub(total, hours << 6))
+            entry = entry & ~0x7ff | mid
+        end
+        db[i] = mid > 0 and (db[i] & ~0x3ff800) | mid << 11 or nil
+        fout:write(string.format('%s\t\t\t%s\t\t%s\t\t\t%s\n',
+                unpack(decode(entry))))
+        flog:write(bytes8(entry))
+        i = i + 1
+    end
+    if fmt then fout:write(fmt.footer) end
+    fout:close()
+    flog:close()
+end
+
+-- print database
+local function print_db(db)
+    for i = 1, #db do
+        print(unpack(decode(db[i])))
+    end
+    print(string.format('total: %s', decode_time(sum(db))))
+end
+
+-- print the complete history
+local function print_history(fn)
+    local f = io.open(fn, 'rb')
+    while f do
+        local s = f:read(8)
+        if not s then break end
+        print(unpack(decode(bits64(s))))
+    end
+    if f then f:close() else print('no history') end
+end
+
+-- get id for the next output file
+local function next_id(dir)
+    local cmd = io.popen('find '..dir..' | sort -nr | head -n 1')
+    local last = cmd:read('*a')
+    cmd:close()
+    local id = last:match('[123456789]%d*') or '0'
+    return tonumber(id) + 1
+end
+
+--[[--------------------------------------------------------------------
+        main code starts here
+--]]--------------------------------------------------------------------
+
+-- configuration
+local name = '<my name>'
+local hours = 50        -- number of hours to work per month
+local start_month = 12  -- the starting month of the contract
+
+-- function table
+local flags = {
+    ['-a'] = function(db, s) db[#db+1] = encode(s) end,
+    ['-f'] = function(db, fn) read_entries(db, fn) end,
+    ['-l'] = function(db) print_db(db); os.exit() end,
+    ['-h'] = function() print_history('.zeitlog'); os.exit() end
+}
+
+-- load the database
+local db = load_db('.zeitdb')
+
+-- parse the arguments
+local flag, value = unpack(arg)
+if not flags[flag] then
+    print('invalid flag')
+    os.exit(1)
+end
+flags[flag](db, value)
+
+-- check if the hour limit is reached
+local total = sum(db)
+if total >> 6 >= hours then
+    local months = {
+        'Januar',
+        'Februar',
+        'März',
+        'April',
+        'Mai',
+        'Juni',
+        'Juli',
+        'August',
+        'September',
+        'Oktober',
+        'November',
+        'Dezember'
+    }
+
+    local header = string.format([[
+
+
+Eberhard Karls Universität Tübingen
+Stundenzettel studentische Hilfskraft
+SFB 833, A3 Projekt
+
+
+Name: %-25s Monat: %%s
+
+-----------------------------------------------------
+Datum	            Beginn		Ende		    Ist
+-----------------------------------------------------
+]], name)
+
+    local footer = string.format([[
+-----------------------------------------------------
+                                Summe: %14s
+-----------------------------------------------------
+
+Die Richtigkeit wird versichert:
+
+
+Datum/Unterschrift Hilfskraft       Tübingen, ______________________________________________
+
+Datum/Unterschrift BetreuerIn       Tübingen, ______________________________________________
+
+Datum/Unterschrift Vorgesetzte/r    Tübingen, ______________________________________________
+]], string.format('%d:00', hours))
+
+    -- write completed months to file
+    os.execute('if [ ! -d output ]; then mkdir output; fi')
+    local fmt = { footer = footer }
+    local total = sum(db)
+    while total >> 6 >= hours do
+        local id = next_id('output/')
+        local month = (id + start_month - 2) % 12 + 1
+        local fn = string.format('output/%03d_%s.txt', id, months[month])
+        fmt.header = string.format(header, months[month])
+        write_month(db, fn, '.zeitlog', hours, fmt)
+        print('month complete! output written to '..fn)
+        total = total - (hours << 6)
+    end
+end
+
+-- save the database
+save_db(db, '.zeitdb')

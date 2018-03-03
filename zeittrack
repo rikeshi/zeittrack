@@ -4,7 +4,7 @@
 if #arg < 1 or #arg > 2 then
     print(string.format([[
 
-    ./%s <flag> [value]
+    %s <flag> [value]
     simple zeiterfassungsmanager
 
     .zeitdb     : database with active entries

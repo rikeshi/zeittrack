@@ -95,7 +95,7 @@ local function decode(n)
 end
 
 -- convert number to byte string
-local function bytes8(n)
+local function bytes6(n)
     return string.char(
         n >> 40 & 0xff,
         n >> 32 & 0xff,
@@ -106,7 +106,7 @@ local function bytes8(n)
 end
 
 -- convert byte string to number
-local function bits64(s)
+local function bits48(s)
     return s:byte(1) << 40
          | s:byte(2) << 32
          | s:byte(3) << 24
@@ -122,7 +122,7 @@ local function load_db(fn)
     while f do
         local s = f:read(6)
         if not s then break end
-        db[#db+1] = bits64(s)
+        db[#db+1] = bits48(s)
     end
     if f then f:close() end
     return db
@@ -132,7 +132,7 @@ end
 local function save_db(db, fn, mode)
     local f = io.open(fn, mode or 'wb')
     for _, entry in pairs(db) do
-        f:write(bytes8(entry))
+        f:write(bytes6(entry))
     end
     f:close()
 end
@@ -162,7 +162,7 @@ local function write_month(db, fnout, fnlog, hours, fmt)
         db[i] = mid > 0 and (db[i] & ~0x3ff800) | mid << 11 or nil
         fout:write(string.format('%s\t\t\t%s\t\t%s\t\t\t%s\n',
                 unpack(decode(entry))))
-        flog:write(bytes8(entry))
+        flog:write(bytes6(entry))
         i = i + 1
     end
     if fmt then fout:write(fmt.footer) end
@@ -184,7 +184,7 @@ local function print_history(fn)
     while f do
         local s = f:read(6)
         if not s then break end
-        print(unpack(decode(bits64(s))))
+        print(unpack(decode(bits48(s))))
     end
     if f then f:close() else print('no history') end
 end

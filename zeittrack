@@ -277,15 +277,15 @@ Datum/Unterschrift Vorgesetzte/r    Tübingen, _________________________________
     -- write completed months to file
     os.execute('if [ ! -d output ]; then mkdir output; fi')
     local fmt = { footer = footer }
-    local total = sum(db)
-    while total >> 6 >= hours do
+    local total = sum(db) >> 6
+    while total >= hours do
         local id = next_id('output/')
         local month = (id + start_month - 2) % 12 + 1
         local fn = string.format('output/%03d_%s.txt', id, months[month])
         fmt.header = string.format(header, months[month])
         write_month(db, fn, '.zeitlog', hours, fmt)
         print('month complete! output written to '..fn)
-        total = total - (hours << 6)
+        total = total - hours
     end
 end
 

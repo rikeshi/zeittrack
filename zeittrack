@@ -227,8 +227,8 @@ end
 flags[flag](db, value)
 
 -- check if the hour limit is reached
-local total = sum(db)
-if total >> 6 >= hours then
+local total = sum(db) >> 6
+if total >= hours then
     local months = {
         'Januar',
         'Februar',
@@ -277,7 +277,6 @@ Datum/Unterschrift Vorgesetzte/r    Tübingen, _________________________________
     -- write completed months to file
     os.execute('if [ ! -d output ]; then mkdir output; fi')
     local fmt = { footer = footer }
-    local total = sum(db) >> 6
     while total >= hours do
         local id = next_id('output/')
         local month = (id + start_month - 2) % 12 + 1

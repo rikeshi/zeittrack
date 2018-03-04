@@ -22,7 +22,7 @@ end
 local function bit_str(n)
     local bits = {}
     while n ~= 0 do
-        bits[#bits+1] = (n & 1 == 1) and '1' or '0'
+        bits[#bits+1] = n & 1
         n = n >> 1
     end
     for i = 1, #bits >> 1 do
@@ -148,24 +148,24 @@ end
 -- combine entries into a month and write them to file and log
 local function write_month(db, fnout, fnlog, hours, fmt)
     local fout, flog = io.open(fnout, 'w'), io.open(fnlog, 'ab')
-    if fmt then fout:write(fmt.header) end
-    local i, done = next(db), false
-    local total, mid = 0, 0
+    local i, done, total, mid = next(db), false, 0, nil
+    hours = hours << 6
+    fout:write(fmt.header)
     while not done do
         local entry = db[i]
         total = add(total, duration(entry))
-        done = total >> 6 >= hours
-        if done then
-            mid = sub(entry & 0x7ff, sub(total, hours << 6))
+        done = total >= hours
+        if done and total > hours then
+            mid = sub(entry & 0x7ff, sub(total, hours))
+            db[i] = (db[i] & ~0x3ff800) | mid << 11
             entry = entry & ~0x7ff | mid
-        end
-        db[i] = mid > 0 and (db[i] & ~0x3ff800) | mid << 11 or nil
+        else db[i] = nil end
         fout:write(string.format('%s\t\t\t%s\t\t%s\t\t\t%s\n',
                 unpack(decode(entry))))
         flog:write(bytes6(entry))
         i = i + 1
     end
-    if fmt then fout:write(fmt.footer) end
+    fout:write(fmt.footer)
     fout:close()
     flog:close()
 end

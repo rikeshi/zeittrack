@@ -1,0 +1,19 @@
+#!/usr/bin/env lua
+
+-- check the arguments
+if #arg ~= 2 then
+    print("Usage: %s <begin_time> <end_time>")
+    os.exit(1)
+end
+
+-- get the current date
+local cmd = io.popen('date +%Y-%M-%d')
+local today = cmd:read('*l')
+cmd:close()
+
+-- create the entry
+local start, stop = unpack(arg)
+local entry = string.format('%s, %s - %s', today, start, stop)
+
+-- add to entry
+os.execute(string.format('./zeittrack -a "%s"', entry))

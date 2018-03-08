@@ -7,7 +7,7 @@ if #arg ~= 2 then
 end
 
 -- get the current date
-local cmd = io.popen('date +%Y-%M-%d')
+local cmd = io.popen('date +%Y-%m-%d')
 local today = cmd:read('*l')
 cmd:close()
 
